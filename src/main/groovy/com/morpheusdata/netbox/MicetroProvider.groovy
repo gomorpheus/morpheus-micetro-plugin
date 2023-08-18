@@ -793,7 +793,9 @@ class MicetroProvider implements IPAMProvider {
 				new OptionType(code: 'micetro.servicePassword', name: 'Service Password', inputType: OptionType.InputType.PASSWORD, fieldName: 'servicePassword', fieldLabel: 'Password', fieldContext: 'domain', displayOrder: 3,localCredential: true, required: true),
 				new OptionType(code: 'micetro.throttleRate', name: 'Throttle Rate', inputType: OptionType.InputType.NUMBER, defaultValue: 0, fieldName: 'serviceThrottleRate', fieldLabel: 'Throttle Rate', fieldContext: 'domain', displayOrder: 4),
 				new OptionType(code: 'micetro.ignoreSsl', name: 'Ignore SSL', inputType: OptionType.InputType.CHECKBOX, defaultValue: 0, fieldName: 'ignoreSsl', fieldLabel: 'Disable SSL SNI Verification', fieldContext: 'domain', displayOrder: 5),
-				new OptionType(code: 'micetro.inventoryExisting', name: 'Inventory Existing', inputType: OptionType.InputType.CHECKBOX, defaultValue: 0, fieldName: 'inventoryExisting', fieldLabel: 'Inventory Existing', fieldContext: 'config', displayOrder: 6)
+				new OptionType(code: 'micetro.inventoryExisting', name: 'Inventory Existing', inputType: OptionType.InputType.CHECKBOX, defaultValue: 0, fieldName: 'inventoryExisting', fieldLabel: 'Inventory Existing', fieldContext: 'config', displayOrder: 6),
+                new OptionType(code: 'micetro.customProperties', name: 'Custom Properties', inputType: OptionType.InputType.TEXT, fieldName: 'customProperties', fieldLabel: 'Inventory Existing', fieldContext: 'config', displayOrder: 7, required: true)
+
 		]
 	}
 
