@@ -348,6 +348,7 @@ class MicetroProvider implements IPAMProvider {
 
         try {
             def hostname = networkPoolIp.hostname
+            def customProperty = poolServer.configMap?.nameProperty
 
             if(domain && hostname && !hostname.endsWith(domain.name))  {
                 hostname = "${hostname}.${domain.name}"
@@ -381,9 +382,9 @@ class MicetroProvider implements IPAMProvider {
                 }
             }
 
-            apiPath = getServicePath(rpcConfig.serviceUrl) + platformUrl + '/ipamRecords/ref'
+            apiPath = getServicePath(rpcConfig.serviceUrl) + platformUrl + 'ipamRecords/ref'
             requestOptions.queryParams = [:]
-            requestOptions.body = JsonOutput.toJson(['ref':networkPoolIp.ipAddress,'objType':'IPAddress','saveComment':'Created with Morpheus','properties':['InstanceName':hostname]])
+            requestOptions.body = JsonOutput.toJson(['ref':networkPoolIp.ipAddress,'objType':'IPAddress','saveComment':'Created with Morpheus','properties':[(customProperty):hostname]])
 
             results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'PUT')
 
@@ -411,10 +412,11 @@ class MicetroProvider implements IPAMProvider {
         try {
             def results = []
             def hostname = networkPoolIp.hostname
+            def customProperty = poolServer.configMap?.nameProperty
             def apiUrl = cleanServiceUrl(rpcConfig.serviceUrl)
-            def apiPath = getServicePath(rpcConfig.serviceUrl) + platformUrl + '/ipamRecords/ref'
+            def apiPath = getServicePath(rpcConfig.serviceUrl) + platformUrl + 'ipamRecords/ref'
             requestOptions.queryParams = [:]
-            requestOptions.body = JsonOutput.toJson(['ref':networkPoolIp.ipAddress,'objType':'IPAddress','saveComment':'Created with Morpheus','properties':['InstanceName':hostname]])
+            requestOptions.body = JsonOutput.toJson(['ref':networkPoolIp.ipAddress,'objType':'IPAddress','saveComment':'Created with Morpheus','properties':[(customProperty):hostname]])
 
             results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'PUT')
 
@@ -794,7 +796,7 @@ class MicetroProvider implements IPAMProvider {
 				new OptionType(code: 'micetro.throttleRate', name: 'Throttle Rate', inputType: OptionType.InputType.NUMBER, defaultValue: 0, fieldName: 'serviceThrottleRate', fieldLabel: 'Throttle Rate', fieldContext: 'domain', displayOrder: 4),
 				new OptionType(code: 'micetro.ignoreSsl', name: 'Ignore SSL', inputType: OptionType.InputType.CHECKBOX, defaultValue: 0, fieldName: 'ignoreSsl', fieldLabel: 'Disable SSL SNI Verification', fieldContext: 'domain', displayOrder: 5),
 				new OptionType(code: 'micetro.inventoryExisting', name: 'Inventory Existing', inputType: OptionType.InputType.CHECKBOX, defaultValue: 0, fieldName: 'inventoryExisting', fieldLabel: 'Inventory Existing', fieldContext: 'config', displayOrder: 6),
-                new OptionType(code: 'micetro.customProperties', name: 'Custom Properties', inputType: OptionType.InputType.TEXT, fieldName: 'customProperties', fieldLabel: 'Inventory Existing', fieldContext: 'config', displayOrder: 7, required: true)
+                new OptionType(code: 'micetro.nameProperty', name: 'Name Property', inputType: OptionType.InputType.TEXT, fieldName: 'nameProperty', fieldLabel: 'Name Property', fieldContext: 'config', helpBlock: "Supply the Custom Property [Key] that will Store Hostname [Value]", placeHolder: "serverName", displayOrder: 7, required: true)
 
 		]
 	}
