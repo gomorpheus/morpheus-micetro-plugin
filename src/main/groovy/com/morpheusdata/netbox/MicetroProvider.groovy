@@ -681,7 +681,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 				def recordType = record.type
 				def apiPath = platformUrl + 'dnsZones/' + record.networkDomain.externalId.toString() + '/dnsRecords'
 				def results = new ServiceResponse()
-				requestOptions.body = JsonOutput.toJson(['dnsRecord':['ttl':"${record.ttl ?: 86400}",'data':record.content,'type':recordType,'name':fqdn]])
+				requestOptions.body = JsonOutput.toJson(['dnsRecord':['ttl':"${record.ttl ?: 3600}",'data':record.content,'type':recordType,'name':fqdn]])
 
                 results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'POST')
 
@@ -752,6 +752,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
         try {
             def hostname = networkPoolIp.hostname
             def customProperty = poolServer.configMap?.nameProperty
+            def recordType
 
             if(domain && hostname && !hostname.endsWith(domain.name))  {
                 hostname = "${hostname}.${domain.name}"
@@ -762,8 +763,10 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                 // Make sure it's a valid IP
                 if (inetAddressValidator.isValidInet4Address(networkPoolIp.ipAddress)) {
                     log.info("A Valid IPv4 Address Entered: ${networkPoolIp.ipAddress}")
+                    recordType = 'A'
                 } else if (inetAddressValidator.isValidInet6Address(networkPoolIp.ipAddress)) {
                     log.info("A Valid IPv6 Address Entered: ${networkPoolIp.ipAddress}")
+                    recordType = 'AAAA'
                 } else {
                     log.error("Invalid IP Address Requested: ${networkPoolIp.ipAddress}", results)
                     return ServiceResponse.error("Invalid IP Address Requested: ${networkPoolIp.ipAddress}")
@@ -781,6 +784,40 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                 } else {
                     log.warn("API Call Failed to allocate IP Address")
                     return ServiceResponse.error("API Call Failed to allocate IP Address",null,networkPoolIp)
+                }
+            }
+
+            if(createARecord) {
+                networkPoolIp.domain = domain
+            }
+            if (networkPoolIp.id) {
+                networkPoolIp = morpheus.network.pool.poolIp.save(networkPoolIp)?.blockingGet()
+            } else {
+                networkPoolIp = morpheus.network.pool.poolIp.create(networkPoolIp)?.blockingGet()
+            }
+
+            if (createARecord && domain) {
+                def fqdn = hostname
+				if(hostname.endsWith(domain.name)) {
+					fqdn = hostname.tokenize('.')[0]
+				}
+
+				def apiPath = platformUrl + 'dnsZones/' + domain.externalId.toString() + '/dnsRecords'
+				def results = new ServiceResponse()
+				requestOptions.body = JsonOutput.toJson(['dnsRecord':['ttl':'3600','data':networkPoolIp.ipAddress,'type':recordType,'name':fqdn]])
+
+                results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'POST')
+
+                if(results.success && !results.error) {
+                    ref externalId = results.data.result?.ref.tokenize('/')[1]
+                    def domainRecord = new NetworkDomainRecord(networkDomain: domain, networkPoolIp: networkPoolIp, name: hostname, fqdn: fqdn, source: 'user', type: recordType, externalId: externalId)
+                    domainRecord.content = 
+                    
+                    
+                    
+                    return new ServiceResponse<NetworkDomainRecord>(true,null,null,record)
+                    rtn.data = record
+                    rtn.success = true
                 }
             }
 
