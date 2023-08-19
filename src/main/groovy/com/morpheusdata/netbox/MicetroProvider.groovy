@@ -679,16 +679,14 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                 HttpApiClient.RequestOptions requestOptions = new HttpApiClient.RequestOptions(ignoreSSL: rpcConfig.ignoreSSL)
 				def apiUrl = cleanServiceUrl(rpcConfig.serviceUrl)
 				def recordType = record.type
-				def apiPath = platformUrl + 'dnsRecords'
+				def apiPath = platformUrl + 'dnsZones/' + record.networkDomain.externalId.toString() + '/dnsRecords'
 				def results = new ServiceResponse()
-				def body = JsonOutput.toJson(['dnsRecords':[['dnsZoneRef':'dnsZones/' + record.networkDomain.internalId.toString(),'data':record.content,'type':recordType,'name':fqdn]]])
+				requestOptions.body = JsonOutput.toJson(['dnsRecord':['ttl':"${record.ttl ?: 86400}",'data':record.content,'type':recordType,'name':fqdn]])
 
-                results = client.callApi(apiUrl, apiPath, rpcConfig.username, rpcConfig.password, requestOptions, 'POST')
+                results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'POST')
 
-                log.info("createRecord results: ${results}")
-
-                if(results.success) {
-                    record.externalId = results.objRefs.tokenize('/')[1]
+                if(results.success && !results.error) {
+                    record.externalId = results.data.result?.ref.tokenize('/')[1]
                     return new ServiceResponse<NetworkDomainRecord>(true,null,null,record)
                     rtn.data = record
                     rtn.success = true
