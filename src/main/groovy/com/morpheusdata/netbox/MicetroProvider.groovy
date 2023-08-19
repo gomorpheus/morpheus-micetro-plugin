@@ -2,6 +2,7 @@ package com.morpheusdata.micetro
 
 import com.morpheusdata.core.util.HttpApiClient
 import com.morpheusdata.core.util.NetworkUtility
+import com.morpheusdata.core.DNSProvider
 import com.morpheusdata.core.IPAMProvider
 import com.morpheusdata.core.MorpheusContext
 import com.morpheusdata.core.Plugin
@@ -10,12 +11,15 @@ import com.morpheusdata.core.util.SyncTask
 import com.morpheusdata.model.AccountIntegration
 import com.morpheusdata.model.Icon
 import com.morpheusdata.model.NetworkDomain
+import com.morpheusdata.model.NetworkDomainRecord
 import com.morpheusdata.model.NetworkPool
 import com.morpheusdata.model.NetworkPoolIp
 import com.morpheusdata.model.NetworkPoolRange
 import com.morpheusdata.model.NetworkPoolServer
 import com.morpheusdata.model.NetworkPoolType
 import com.morpheusdata.model.OptionType
+import com.morpheusdata.model.projection.NetworkDomainIdentityProjection
+import com.morpheusdata.model.projection.NetworkDomainRecordIdentityProjection
 import com.morpheusdata.model.projection.NetworkPoolIdentityProjection
 import com.morpheusdata.model.projection.NetworkPoolIpIdentityProjection
 import com.morpheusdata.response.ServiceResponse
@@ -32,7 +36,7 @@ import io.reactivex.Observable
 import org.apache.commons.validator.routines.InetAddressValidator
 
 @Slf4j
-class MicetroProvider implements IPAMProvider {
+class MicetroProvider implements IPAMProvider, DNSProvider {
 	MorpheusContext morpheusContext
 	Plugin plugin
     static String platformUrl = 'mmws/api/v2/'
@@ -207,8 +211,10 @@ class MicetroProvider implements IPAMProvider {
 			Date now = new Date()
 
             cacheNetworks(micetroClient,poolServer)
+            cacheZones(micetroClient,poolServer, opts)
             if(poolServer?.configMap?.inventoryExisting) {
-                cacheIpAddressRecords(micetroClient,poolServer)
+                cacheIpAddressRecords(micetroClient,poolServer, opts)
+                cacheZoneRecords(micetroClient,poolServer, opts)
             }
             log.info("Sync Completed in ${new Date().time - now.time}ms")
             morpheus.network.updateNetworkPoolServerStatus(poolServer, AccountIntegration.Status.ok).subscribe().dispose()
@@ -260,7 +266,7 @@ class MicetroProvider implements IPAMProvider {
 		List<NetworkPool> missingPoolsList = []
 		chunkedAddList?.each { Map it ->
             def isPool = it.utilizationPercentage
-            if (isPool) {
+            if ((it?.utilizationPercentage >= 0) || (!it.isContainer && it.name.contains(':'))) {
                 def id = it?.ref?.tokenize('/')[1]
                 def newNetworkPool
                 def name = it.customProperties.Title ?: it.name
@@ -333,7 +339,372 @@ class MicetroProvider implements IPAMProvider {
 			morpheus.network.pool.save(poolsToUpdate).blockingGet()
 		}
 	}
+
+    // Cache Zones methods
+	def cacheZones(HttpApiClient client, NetworkPoolServer poolServer, Map opts = [:]) {
+		try {
+			def listResults = listZones(client, poolServer, opts)
+
+			log.info("listZoneResults: {}", listResults)
+			if (listResults.success && listResults.data != null) {
+				List apiItems = listResults.data as List<Map>
+				Observable<NetworkDomainIdentityProjection> domainRecords = morpheus.network.domain.listIdentityProjections(poolServer.integration.id)
+
+				SyncTask<NetworkDomainIdentityProjection,Map,NetworkDomain> syncTask = new SyncTask(domainRecords, apiItems as Collection<Map>)
+				syncTask.addMatchFunction { NetworkDomainIdentityProjection domainObject, Map apiItem ->
+					domainObject.externalId == "${apiItem.ref.tokenize('/')[1]}"
+				}.addMatchFunction { NetworkDomainIdentityProjection domainObject, Map apiItem ->
+					domainObject.name == apiItem.name
+				}.onDelete {removeItems ->
+					morpheus.network.domain.remove(poolServer.integration.id, removeItems).blockingGet()
+				}.onAdd { itemsToAdd ->
+					addMissingZones(poolServer, itemsToAdd)
+				}.withLoadObjectDetails { List<SyncTask.UpdateItemDto<NetworkDomainIdentityProjection,Map>> updateItems ->
+					Map<Long, SyncTask.UpdateItemDto<NetworkDomainIdentityProjection, Map>> updateItemMap = updateItems.collectEntries { [(it.existingItem.id): it]}
+					return morpheus.network.domain.listById(updateItems.collect{it.existingItem.id} as Collection<Long>).map { NetworkDomain networkDomain ->
+						SyncTask.UpdateItemDto<NetworkDomainIdentityProjection, Map> matchItem = updateItemMap[networkDomain.id]
+						return new SyncTask.UpdateItem<NetworkDomain,Map>(existingItem:networkDomain, masterItem:matchItem.masterItem)
+					}
+				}.onUpdate { List<SyncTask.UpdateItem<NetworkDomain,Map>> updateItems ->
+					updateMatchedZones(poolServer, updateItems)
+				}.start()
+			} 
+		} catch (e) {
+			log.error("cacheZones error: ${e}", e)
+		}
+	}
 	
+    private ServiceResponse listZones(HttpApiClient client, NetworkPoolServer poolServer, Map opts = [:]) {
+        def rtn = new ServiceResponse()
+        rtn.data = [] // Initialize rtn.data as an empty list
+        try {
+            def rpcConfig = getRpcConfig(poolServer)
+            def apiUrl = cleanServiceUrl(rpcConfig.serviceUrl)
+            def apiPath = getServicePath(rpcConfig.serviceUrl) + platformUrl + 'dnsZones'
+            def hasMore = true
+            def attempt = 0
+            def doPaging = opts.doPaging != null ? opts.doPaging : true
+            def start = 0
+            def maxResults = opts.maxResults ?: 1000
+
+            log.debug("url: ${apiUrl} path: ${apiPath}")
+
+            if(doPaging == true) {
+                
+                while(hasMore && attempt < 1000) {
+                    attempt++
+                    HttpApiClient.RequestOptions requestOptions = new HttpApiClient.RequestOptions(ignoreSSL: rpcConfig.ignoreSSL)
+                    requestOptions.queryParams = [limit:maxResults.toString(),offset:start.toString()]
+
+                    def results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'GET')
+
+                    if(results?.success && results?.error != true) {
+                        rtn.success = true
+                        if(results.data?.result?.dnsZones?.size() > 0) {
+                            rtn.data += results.data.result.dnsZones
+
+                            if(doPaging == true) {
+                                start += maxResults
+                                hasMore = true
+                            } else {
+                                hasMore = false
+                            }
+
+                        } else {
+                            hasMore = false
+                        }
+                    } else {
+                        hasMore = false
+
+                        if(!rtn.success) {
+                            rtn.msg = results.error
+                        }
+                    }
+                }
+            } else {
+                HttpApiClient.RequestOptions requestOptions = new HttpApiClient.RequestOptions(ignoreSSL: rpcConfig.ignoreSSL)
+                requestOptions.queryParams = [limit:maxResults.toString(),offset:start.toString()]
+
+                def results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'GET')
+
+                if(results?.success && results?.error != true) {
+                    rtn.success = true
+                    if(results.data?.result?.dnsZones?.size() > 0) {
+                        rtn.data = results.data.result.dnsZones
+                    }
+                } else {
+                    if(!rtn.success) {
+                        rtn.msg = results.error
+                    }
+                }
+            }
+        } catch(e) {
+            log.error("listZones error: ${e}", e)
+        }
+
+        log.debug("List Zones Results: ${rtn}")
+        return rtn
+    }
+
+    void addMissingZones(NetworkPoolServer poolServer, Collection addList) {
+		List<NetworkDomain> missingZonesList = addList?.collect { Map add ->
+			NetworkDomain networkDomain = new NetworkDomain()
+			networkDomain.externalId = add.ref.tokenize('/')[1]
+			networkDomain.name = NetworkUtility.getFriendlyDomainName(add.name as String)
+			networkDomain.fqdn = NetworkUtility.getFqdnDomainName(add.name as String)
+			networkDomain.refSource = 'integration'
+			networkDomain.zoneType = add.type
+			return networkDomain
+		}
+		log.info("Adding Missing Zone Records! ${missingZonesList}")
+		morpheus.network.domain.create(poolServer.integration.id, missingZonesList).blockingGet()
+	}
+
+    void updateMatchedZones(NetworkPoolServer poolServer, List<SyncTask.UpdateItem<NetworkDomain,Map>> updateList) {
+		def domainsToUpdate = []
+		for(SyncTask.UpdateItem<NetworkDomain,Map> update in updateList) {
+			NetworkDomain existingItem = update.existingItem as NetworkDomain
+			if(existingItem) {
+				Boolean save = false
+				if(!existingItem.externalId) {
+					existingItem.externalId = update.masterItem.ref.tokenize('/')[1]
+					save = true
+				}
+				if(!existingItem.refId) {
+					existingItem.refType = update.masterItem.type
+					existingItem.refId = poolServer.integration.id
+					existingItem.refSource = 'integration'
+					save = true
+				}
+
+				if(save) {
+					domainsToUpdate.add(existingItem)
+				}
+			}
+		}
+		if(domainsToUpdate.size() > 0) {
+			morpheus.network.domain.save(domainsToUpdate).blockingGet()
+		}
+	}
+
+    def cacheZoneRecords(HttpApiClient client, NetworkPoolServer poolServer, Map opts = [:]) {
+		morpheus.network.domain.listIdentityProjections(poolServer.integration.id).flatMap {NetworkDomainIdentityProjection domain ->
+            Completable.mergeArray(
+                cacheZoneDomainRecords(client,poolServer,domain)
+            ).toObservable().subscribeOn(Schedulers.io())
+        }.doOnError{ e ->
+            log.error("cacheZoneRecords error: ${e}", e)
+        }.subscribe()
+    }   
+
+    Completable cacheZoneDomainRecords(HttpApiClient client, NetworkPoolServer poolServer, NetworkDomainIdentityProjection domain, Map opts=[:]) {
+		log.info "cacheZoneDomainRecords $poolServer, $domain, $opts"
+		def listResults = listZoneRecords(client, poolServer, domain.name, opts)
+		log.debug("listResults: {}",listResults)
+		if(listResults.success) {
+			List<Map> apiItems = listResults.data as List<Map>
+			Observable<NetworkDomainRecordIdentityProjection> domainRecords = morpheus.network.domain.record.listIdentityProjections(domain)
+			SyncTask<NetworkDomainRecordIdentityProjection,Map,NetworkDomainRecord> syncTask = new SyncTask(domainRecords, apiItems as Collection<Map>)
+			syncTask.addMatchFunction { NetworkDomainRecordIdentityProjection domainObject, Map apiItem ->
+				domainObject.externalId == apiItem.ref.tokenize('/')[1].toString()
+			}.onDelete {removeItems ->
+				morpheus.network.domain.record.remove(domain, removeItems).blockingGet()
+			}.onAdd { itemsToAdd ->
+				addMissingDomainRecords(domain, itemsToAdd)
+			}.withLoadObjectDetails { List<SyncTask.UpdateItemDto<NetworkDomainRecordIdentityProjection,Map>> updateItems ->
+
+				Map<Long, SyncTask.UpdateItemDto<NetworkDomainRecordIdentityProjection, Map>> updateItemMap = updateItems.collectEntries { [(it.existingItem.id): it]}
+				return morpheus.network.domain.record.listById(updateItems.collect{it.existingItem.id} as Collection<Long>).map { NetworkDomainRecord networkDomainRecord ->
+					SyncTask.UpdateItemDto<NetworkDomainRecordIdentityProjection, Map> matchItem = updateItemMap[networkDomainRecord.id]
+					return new SyncTask.UpdateItem<NetworkDomainRecord,Map>(existingItem:networkDomainRecord, masterItem:matchItem.masterItem)
+				}
+			}.onUpdate { List<SyncTask.UpdateItem<NetworkPool,Map>> updateItems ->
+				updateMatchedDomainRecords(updateItems)
+			}
+			Completable.fromObservable(syncTask.observe())
+		} else {
+			return Completable.complete()
+		}
+	}
+
+    void addMissingDomainRecords(NetworkDomainIdentityProjection domain, Collection<Map> addList) {
+		List<NetworkDomainRecord> records = []
+		addList?.each {
+            def name
+            def fqdn
+            if (it.type == 'PTR') {
+                name = it.data
+                fqdn = name
+            } else {
+                name = it.name
+                fqdn = ${name}.${domain.name ?: ""}
+            }
+            
+            if (name) {
+                def addConfig = [networkDomain: new NetworkDomain(id: domain.id), externalId:it.ref.tokenize('/')[1], name: name.toString(), fqdn: fqdn, type: it.type, source: 'sync']
+
+                def newObj = new NetworkDomainRecord(addConfig)
+                records.add(newObj)
+            }
+		}
+		morpheus.network.domain.record.create(domain,records).blockingGet()
+	}
+
+    void updateMatchedDomainRecords(List<SyncTask.UpdateItem<NetworkDomainRecord, Map>> updateList) {
+		def records = []
+		updateList?.each { update ->
+			NetworkDomainRecord existingItem = update.existingItem
+			if(existingItem) {
+				//update view ?
+				def save = false
+                def name
+                def fqdn
+                
+				if (update.masterItem.type == 'PTR') {
+                    name = update.masterItem.data
+                    fqdn = name
+                } else {
+                    name = update.masterItem.name
+                    fqdn = ${name}.${domain.name ?: ""}
+                }
+
+                if (existingItem.name != name) {
+                    existingItem.name = name
+                    save = true
+                }
+
+                if (existingItem.fqdn != fqdn) {
+                    existingItem.fqdn = fqdn
+                    save = true
+                }
+
+				if(save) {
+					records.add(existingItem)
+				}
+			}
+		}
+		if(records.size() > 0) {
+			morpheus.network.domain.record.save(records).blockingGet()
+		}
+	}
+
+    ServiceResponse listZoneRecords(HttpApiClient client, NetworkPoolServer poolServer, String zoneName, Map opts=[:]) {
+        def rtn = new ServiceResponse()
+        rtn.data = [] // Initialize rtn.data as an empty list
+        try {
+            def rpcConfig = getRpcConfig(poolServer)
+            def apiUrl = cleanServiceUrl(rpcConfig.serviceUrl)
+            def apiPath = getServicePath(rpcConfig.serviceUrl) + platformUrl + 'ranges'
+            def hasMore = true
+            def attempt = 0
+            def doPaging = opts.doPaging != null ? opts.doPaging : true
+            def start = 0
+            def maxResults = opts.maxResults ?: 1000
+
+            log.debug("url: ${apiUrl} path: ${apiPath}")
+
+            if(doPaging == true) {
+                
+                while(hasMore && attempt < 1000) {
+                    attempt++
+                    HttpApiClient.RequestOptions requestOptions = new HttpApiClient.RequestOptions(ignoreSSL: rpcConfig.ignoreSSL)
+                    requestOptions.queryParams = [limit:maxResults.toString(),offset:start.toString()]
+
+                    def results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'GET')
+
+                    if(results?.success && results?.error != true) {
+                        rtn.success = true
+                        if(results.data?.result?.ranges?.size() > 0) {
+                            rtn.data += results.data.result.ranges
+
+                            if(doPaging == true) {
+                                start += maxResults
+                                hasMore = true
+                            } else {
+                                hasMore = false
+                            }
+
+                        } else {
+                            hasMore = false
+                        }
+                    } else {
+                        hasMore = false
+
+                        if(!rtn.success) {
+                            rtn.msg = results.error
+                        }
+                    }
+                }
+            } else {
+                HttpApiClient.RequestOptions requestOptions = new HttpApiClient.RequestOptions(ignoreSSL: rpcConfig.ignoreSSL)
+                requestOptions.queryParams = [limit:maxResults.toString(),offset:start.toString()]
+
+                def results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'GET')
+
+                if(results?.success && results?.error != true) {
+                    rtn.success = true
+                    if(results.data?.result?.ranges?.size() > 0) {
+                        rtn.data = results.data.result.ranges
+                    }
+                } else {
+                    if(!rtn.success) {
+                        rtn.msg = results.error
+                    }
+                }
+            }
+        } catch(e) {
+            log.error("listZoneRecords error: ${e}", e)
+        }
+
+        log.debug("List Zone Records Results: ${rtn}")
+        return rtn
+    }
+
+    @Override
+	ServiceResponse<NetworkDomainRecord> createRecord(AccountIntegration integration, NetworkDomainRecord record, Map opts) {
+        ServiceResponse<NetworkDomainRecord> rtn = new ServiceResponse<>()
+		HttpApiClient client = new HttpApiClient()
+		def poolServer = morpheus.network.getPoolServerByAccountIntegration(integration).blockingGet()
+
+        try {
+			if(integration) {
+
+				def fqdn = record.name
+				if(!record.name.endsWith(record.networkDomain.name)) {
+					fqdn = "${record.name}.${record.networkDomain.name}"
+				}
+
+                def rpcConfig = getRpcConfig(poolServer)
+				def apiUrl = cleanServiceUrl(poolServer.serviceUrl)
+				def recordType = record.type
+				def apiPath = platformUrl + 'DNSRecords'
+				def results = new ServiceResponse()
+				def body = JsonOutput.toJson(['dnsZoneRef':record.networkDomain.internalId,'data':networkPoolIp.ipAddress,'type':recordType,'name':fqdn])
+
+                results = client.callApi(apiUrl, apiPath, rpcConfig.username, rpcConfig.password, requestOptions, 'POST')
+			}
+
+            log.info("createRecord results: ${results}")
+
+            if(results.success) {
+                record.externalId = results.objRefs.tokenize('/')[1]
+                return new ServiceResponse<NetworkDomainRecord>(true,null,null,record)
+                rtn.data = record
+                rtn.success = true
+            } else {
+            log.warn("no integration")
+            }   
+		} catch(e) {
+			log.error("provisionServer error: ${e}", e)
+		} finally {
+			client.shutdownClient()
+		}
+		return rtn
+	}
+
+    ServiceResponse deleteRecord(AccountIntegration integration, NetworkDomainRecord record, Map opts) {
+    }
+
 	@Override
 	ServiceResponse createHostRecord(NetworkPoolServer poolServer, NetworkPool networkPool, NetworkPoolIp networkPoolIp, NetworkDomain domain, Boolean createARecord, Boolean createPtrRecord) {
 		HttpApiClient client = new HttpApiClient();
@@ -374,7 +745,6 @@ class MicetroProvider implements IPAMProvider {
                 results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'GET')
 
                 if (results?.success) {
-                log.info("zzzTest: ${results}")
                 networkPoolIp.ipAddress = results?.data?.result?.address
                 } else {
                     log.warn("API Call Failed to allocate IP Address")
@@ -431,6 +801,17 @@ class MicetroProvider implements IPAMProvider {
         } finally {
             client.shutdownClient()
         }
+	}
+
+    @Override
+	void refresh(AccountIntegration integration) {
+	 //NOOP
+	}
+
+    @Override
+	ServiceResponse verifyAccountIntegration(AccountIntegration integration, Map opts) {
+		//NOOP
+		return null
 	}
 
 	@Override
@@ -729,45 +1110,7 @@ class MicetroProvider implements IPAMProvider {
      */
     @Override
     void refresh(NetworkPoolServer poolServer) {
-        log.debug("refreshNetworkPoolServer: {}", poolServer.dump())
-        HttpApiClient micetroClient = new HttpApiClient()
-        micetroClient.throttleRate = poolServer.serviceThrottleRate
-
-        def rpcConfig = getRpcConfig(poolServer)
-        try {
-            def apiUrl = rpcConfig.serviceUrl
-            def apiUrlObj = new URL(apiUrl)
-            def apiHost = apiUrlObj.host
-            def apiPort = apiUrlObj.port > 0 ? apiUrlObj.port : (apiUrlObj?.protocol?.toLowerCase() == 'https' ? 443 : 80)
-            def hostOnline = ConnectionUtils.testHostConnectivity(apiHost, apiPort, false, true, null)
-            log.debug("online: {} - {}", apiHost, hostOnline)
-            def testResults
-            // Promise
-
-            if(hostOnline) {
-                testResults = testNetworkPoolServer(micetroClient,poolServer) as ServiceResponse<Map>
-                if(!testResults?.success) {
-                    morpheus.network.updateNetworkPoolServerStatus(poolServer, AccountIntegration.Status.error, 'error calling Micetro').blockingGet()
-                } else {
-                    morpheus.network.updateNetworkPoolServerStatus(poolServer, AccountIntegration.Status.syncing).blockingGet()
-                }
-            } else {
-                morpheus.network.updateNetworkPoolServerStatus(poolServer, AccountIntegration.Status.error, 'Micetro api not reachable')
-            }
-            Date now = new Date()
-            if(testResults?.success) {
-                cacheNetworks(micetroClient,poolServer)
-                if(poolServer?.configMap?.inventoryExisting) {
-                    cacheIpAddressRecords(micetroClient,poolServer)
-                }
-                log.info("Sync Completed in ${new Date().time - now.time}ms")
-                morpheus.network.updateNetworkPoolServerStatus(poolServer, AccountIntegration.Status.ok).subscribe().dispose()
-            }
-        } catch(e) {
-            log.error("refreshNetworkPoolServer error: ${e}", e)
-        } finally {
-            micetroClient.shutdownClient()
-        }
+        refreshNetworkPoolServer(poolServer, [:])
     }
 
 	/**
