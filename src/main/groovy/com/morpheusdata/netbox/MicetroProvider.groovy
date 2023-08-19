@@ -487,30 +487,34 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 		}
 	}
 
-    def cacheZoneRecords(HttpApiClient client, NetworkPoolServer poolServer, Map opts = [:]) {
+    def cacheZoneRecords(HttpApiClient client, NetworkPoolServer poolServer, Map opts) {
 		morpheus.network.domain.listIdentityProjections(poolServer.integration.id).flatMap {NetworkDomainIdentityProjection domain ->
-            Completable.mergeArray(
-                cacheZoneDomainRecords(client,poolServer,domain)
-            ).toObservable().subscribeOn(Schedulers.io())
-        }.doOnError{ e ->
-            log.error("cacheZoneRecords error: ${e}", e)
-        }.subscribe()
-    }   
+			Completable.mergeArray(cacheZoneDomainRecords(client,poolServer,domain,'A',opts),
+				cacheZoneDomainRecords(client,poolServer, domain, 'AAAA', opts),
+				cacheZoneDomainRecords(client,poolServer, domain, 'PTR', opts),
+				cacheZoneDomainRecords(client,poolServer, domain, 'TXT', opts),
+				cacheZoneDomainRecords(client,poolServer, domain, 'CNAME', opts),
+				cacheZoneDomainRecords(client, poolServer, domain, 'MX', opts)
+			).toObservable().subscribeOn(Schedulers.io())
+		}.doOnError{ e ->
+			log.error("cacheZoneRecords error: ${e}", e)
+		}.subscribe()
+	}  
 
-    Completable cacheZoneDomainRecords(HttpApiClient client, NetworkPoolServer poolServer, NetworkDomainIdentityProjection domain, Map opts=[:]) {
-		log.info "cacheZoneDomainRecords $poolServer, $domain, $opts"
-		def listResults = listZoneRecords(client, poolServer, domain.name, opts)
+	Completable cacheZoneDomainRecords(HttpApiClient client, NetworkPoolServer poolServer, NetworkDomainIdentityProjection domain, String recordType, Map opts) {
+		log.info "cacheZoneDomainRecords $poolServer, $domain, $recordType, $opts"
+		def listResults = listZoneRecords(client, poolServer, domain, recordType, opts)
 		log.debug("listResults: {}",listResults)
 		if(listResults.success) {
 			List<Map> apiItems = listResults.data as List<Map>
-			Observable<NetworkDomainRecordIdentityProjection> domainRecords = morpheus.network.domain.record.listIdentityProjections(domain)
+			Observable<NetworkDomainRecordIdentityProjection> domainRecords = morpheus.network.domain.record.listIdentityProjections(domain,recordType)
 			SyncTask<NetworkDomainRecordIdentityProjection,Map,NetworkDomainRecord> syncTask = new SyncTask(domainRecords, apiItems as Collection<Map>)
 			syncTask.addMatchFunction { NetworkDomainRecordIdentityProjection domainObject, Map apiItem ->
-				domainObject.externalId == apiItem.ref.tokenize('/')[1].toString()
+				domainObject.externalId == apiItem.ref.tokenize('/')[1]
 			}.onDelete {removeItems ->
 				morpheus.network.domain.record.remove(domain, removeItems).blockingGet()
 			}.onAdd { itemsToAdd ->
-				addMissingDomainRecords(domain, itemsToAdd)
+				addMissingDomainRecords(domain, recordType, itemsToAdd)
 			}.withLoadObjectDetails { List<SyncTask.UpdateItemDto<NetworkDomainRecordIdentityProjection,Map>> updateItems ->
 
 				Map<Long, SyncTask.UpdateItemDto<NetworkDomainRecordIdentityProjection, Map>> updateItemMap = updateItems.collectEntries { [(it.existingItem.id): it]}
@@ -518,8 +522,10 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 					SyncTask.UpdateItemDto<NetworkDomainRecordIdentityProjection, Map> matchItem = updateItemMap[networkDomainRecord.id]
 					return new SyncTask.UpdateItem<NetworkDomainRecord,Map>(existingItem:networkDomainRecord, masterItem:matchItem.masterItem)
 				}
+
+
 			}.onUpdate { List<SyncTask.UpdateItem<NetworkPool,Map>> updateItems ->
-				updateMatchedDomainRecords(updateItems)
+				updateMatchedDomainRecords(recordType,domain, updateItems)
 			}
 			Completable.fromObservable(syncTask.observe())
 		} else {
@@ -527,21 +533,11 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 		}
 	}
 
-    void addMissingDomainRecords(NetworkDomainIdentityProjection domain, Collection<Map> addList) {
+    void addMissingDomainRecords(NetworkDomainIdentityProjection domain, String recordType, Collection<Map> addList) {
 		List<NetworkDomainRecord> records = []
-		addList?.each {
-            def name
-            def fqdn
-            if (it.type == 'PTR') {
-                name = it.data
-                fqdn = name
-            } else {
-                name = it.name
-                fqdn = ${name}.${domain.name ?: ""}
-            }
-            
-            if (name) {
-                def addConfig = [networkDomain: new NetworkDomain(id: domain.id), externalId:it.ref.tokenize('/')[1], name: name.toString(), fqdn: fqdn, type: it.type, source: 'sync']
+		addList?.each {            
+            if (it.name) {
+                def addConfig = [networkDomain: new NetworkDomain(id: domain.id), externalId:it.ref.tokenize('/')[1],ttl: it.ttl.toInteger(), name: it.name, content: it.data, fqdn: "${it.name}.${domain.name ?: ""}", type: recordType, source: 'sync']
 
                 def newObj = new NetworkDomainRecord(addConfig)
                 records.add(newObj)
@@ -550,23 +546,17 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 		morpheus.network.domain.record.create(domain,records).blockingGet()
 	}
 
-    void updateMatchedDomainRecords(List<SyncTask.UpdateItem<NetworkDomainRecord, Map>> updateList) {
+    void updateMatchedDomainRecords(String recordType,domain,List<SyncTask.UpdateItem<NetworkDomainRecord, Map>> updateList) {
 		def records = []
 		updateList?.each { update ->
 			NetworkDomainRecord existingItem = update.existingItem
 			if(existingItem) {
 				//update view ?
 				def save = false
-                def name
-                def fqdn
-                
-				if (update.masterItem.type == 'PTR') {
-                    name = update.masterItem.data
-                    fqdn = name
-                } else {
-                    name = update.masterItem.name
-                    fqdn = ${name}.${domain.name ?: ""}
-                }
+                def name = update.masterItem.name
+                def fqdn = "${name}.${domain.name ?: ""}"
+                def data = update.masterItem.data
+                def ttl = update.masterItem.ttl.toInteger()
 
                 if (existingItem.name != name) {
                     existingItem.name = name
@@ -575,6 +565,16 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
                 if (existingItem.fqdn != fqdn) {
                     existingItem.fqdn = fqdn
+                    save = true
+                }
+
+                if (existingItem.content != data) {
+                    existingItem.content = data
+                    save = true
+                }
+
+                if (existingItem.ttl != ttl) {
+                    existingItem.ttl = ttl
                     save = true
                 }
 
@@ -588,13 +588,13 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 		}
 	}
 
-    ServiceResponse listZoneRecords(HttpApiClient client, NetworkPoolServer poolServer, String zoneName, Map opts=[:]) {
+    ServiceResponse listZoneRecords(HttpApiClient client, NetworkPoolServer poolServer, NetworkDomainIdentityProjection domain, String recordType = 'A', Map opts=[:]) {
         def rtn = new ServiceResponse()
         rtn.data = [] // Initialize rtn.data as an empty list
         try {
             def rpcConfig = getRpcConfig(poolServer)
             def apiUrl = cleanServiceUrl(rpcConfig.serviceUrl)
-            def apiPath = getServicePath(rpcConfig.serviceUrl) + platformUrl + 'ranges'
+            def apiPath = getServicePath(rpcConfig.serviceUrl) + platformUrl + 'dnsZones/' + domain.externalId + '/dnsRecords'
             def hasMore = true
             def attempt = 0
             def doPaging = opts.doPaging != null ? opts.doPaging : true
@@ -608,14 +608,14 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                 while(hasMore && attempt < 1000) {
                     attempt++
                     HttpApiClient.RequestOptions requestOptions = new HttpApiClient.RequestOptions(ignoreSSL: rpcConfig.ignoreSSL)
-                    requestOptions.queryParams = [limit:maxResults.toString(),offset:start.toString()]
+                    requestOptions.queryParams = ["filter":"type=${recordType}",limit:maxResults.toString(),offset:start.toString()]
 
                     def results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'GET')
 
                     if(results?.success && results?.error != true) {
                         rtn.success = true
-                        if(results.data?.result?.ranges?.size() > 0) {
-                            rtn.data += results.data.result.ranges
+                        if(results.data?.result?.dnsRecords?.size() > 0) {
+                            rtn.data += results.data.result.dnsRecords
 
                             if(doPaging == true) {
                                 start += maxResults
@@ -635,6 +635,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                         }
                     }
                 }
+                
             } else {
                 HttpApiClient.RequestOptions requestOptions = new HttpApiClient.RequestOptions(ignoreSSL: rpcConfig.ignoreSSL)
                 requestOptions.queryParams = [limit:maxResults.toString(),offset:start.toString()]
@@ -643,8 +644,8 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
                 if(results?.success && results?.error != true) {
                     rtn.success = true
-                    if(results.data?.result?.ranges?.size() > 0) {
-                        rtn.data = results.data.result.ranges
+                    if(results.data?.result?.dnsRecords?.size() > 0) {
+                        rtn.data = results.data.result.dnsRecords
                     }
                 } else {
                     if(!rtn.success) {
@@ -670,28 +671,29 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 			if(integration) {
 
 				def fqdn = record.name
-				if(!record.name.endsWith(record.networkDomain.name)) {
-					fqdn = "${record.name}.${record.networkDomain.name}"
+				if(record.name.endsWith(record.networkDomain.name)) {
+					fqdn = record.name.tokenize('.')[0]
 				}
 
                 def rpcConfig = getRpcConfig(poolServer)
-				def apiUrl = cleanServiceUrl(poolServer.serviceUrl)
+                HttpApiClient.RequestOptions requestOptions = new HttpApiClient.RequestOptions(ignoreSSL: rpcConfig.ignoreSSL)
+				def apiUrl = cleanServiceUrl(rpcConfig.serviceUrl)
 				def recordType = record.type
-				def apiPath = platformUrl + 'DNSRecords'
+				def apiPath = platformUrl + 'dnsRecords'
 				def results = new ServiceResponse()
-				def body = JsonOutput.toJson(['dnsZoneRef':record.networkDomain.internalId,'data':networkPoolIp.ipAddress,'type':recordType,'name':fqdn])
+				def body = JsonOutput.toJson(['dnsRecords':[['dnsZoneRef':'dnsZones/' + record.networkDomain.internalId.toString(),'data':record.content,'type':recordType,'name':fqdn]]])
 
                 results = client.callApi(apiUrl, apiPath, rpcConfig.username, rpcConfig.password, requestOptions, 'POST')
-			}
 
-            log.info("createRecord results: ${results}")
+                log.info("createRecord results: ${results}")
 
-            if(results.success) {
-                record.externalId = results.objRefs.tokenize('/')[1]
-                return new ServiceResponse<NetworkDomainRecord>(true,null,null,record)
-                rtn.data = record
-                rtn.success = true
-            } else {
+                if(results.success) {
+                    record.externalId = results.objRefs.tokenize('/')[1]
+                    return new ServiceResponse<NetworkDomainRecord>(true,null,null,record)
+                    rtn.data = record
+                    rtn.success = true
+                }
+			} else {
             log.warn("no integration")
             }   
 		} catch(e) {
@@ -703,6 +705,38 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 	}
 
     ServiceResponse deleteRecord(AccountIntegration integration, NetworkDomainRecord record, Map opts) {
+        def rtn = new ServiceResponse()
+        try {
+            if(integration) {
+                morpheus.network.getPoolServerByAccountIntegration(integration).doOnSuccess({ poolServer ->
+                    def rpcConfig = getRpcConfig(poolServer)
+                    HttpApiClient client = new HttpApiClient()
+                    HttpApiClient.RequestOptions requestOptions = new HttpApiClient.RequestOptions(ignoreSSL: rpcConfig.ignoreSSL)
+                    def apiUrl = cleanServiceUrl(rpcConfig.serviceUrl)
+                    try {
+                        def apiPath = platformUrl + 'dnsRecords/' + record.externalId
+
+                        def results = client.callApi(apiUrl, apiPath, rpcConfig.username, rpcConfig.password, requestOptions, 'DELETE')
+                        log.info("deleteRecord results: ${results}")
+                        if(results.success) {
+							rtn.success = true
+						}
+                    } finally {
+						client.shutdownClient()
+					}
+                }).doOnError({error ->
+					log.error("Error deleting record: {}",error.message,error)
+				}).doOnSubscribe({ sub ->
+					log.info "Subscribed"
+				}).blockingGet()
+				return ServiceResponse.success()
+			} else {
+			log.warn("no integration")
+			}
+        } catch(e) {
+            log.error("provisionServer error: ${e}", e)
+        }
+        return rtn
     }
 
 	@Override
