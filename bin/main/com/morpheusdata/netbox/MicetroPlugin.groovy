@@ -13,22 +13,22 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 */
-package com.morpheusdata.netbox
+package com.morpheusdata.micetro
 
 import com.morpheusdata.core.Plugin
 
-class NetBoxPlugin extends Plugin {
+class MicetroPlugin extends Plugin {
 
 	@Override
 	String getCode() {
-		return 'morpheus-netbox-plugin'
+		return 'morpheus-micetro-plugin'
 	}
 
 	@Override
 	void initialize() {
-		NetBoxProvider netboxProvider = new NetBoxProvider(this, morpheus)
-		this.pluginProviders.put("netbox", netboxProvider)
-		this.setName("NetBox")
+		MicetroProvider micetroProvider = new MicetroProvider(this, morpheus)
+		this.pluginProviders.put("micetro", micetroProvider)
+		this.setName("Micetro")
 	}
 
 	/**
