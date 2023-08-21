@@ -326,6 +326,10 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 					existingItem.displayName = displayName
 					save = true
 				}
+                if(networkIp.contains(':') && existingItem?.cidrIPv6 != networkIp) {
+                    existingItem.cidrIPv6 = networkIp
+                    save = true
+                }
 				if(existingItem?.cidr != networkIp) {
 					existingItem.cidr = networkIp
 					save = true
