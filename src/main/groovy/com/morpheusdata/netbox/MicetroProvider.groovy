@@ -394,7 +394,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                 while(hasMore && attempt < 1000) {
                     attempt++
                     HttpApiClient.RequestOptions requestOptions = new HttpApiClient.RequestOptions(ignoreSSL: rpcConfig.ignoreSSL)
-                    requestOptions.queryParams = [limit:maxResults.toString(),offset:start.toString()]
+                    requestOptions.queryParams = ['filter':'type=Primary',limit:maxResults.toString(),offset:start.toString()]
 
                     def results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'GET')
 
@@ -453,7 +453,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 			networkDomain.name = NetworkUtility.getFriendlyDomainName(add.name as String)
 			networkDomain.fqdn = NetworkUtility.getFqdnDomainName(add.name as String)
 			networkDomain.refSource = 'integration'
-			networkDomain.zoneType = add.type
+			networkDomain.zoneType = 'Authoritative'
 			return networkDomain
 		}
 		log.info("Adding Missing Zone Records! ${missingZonesList}")
@@ -502,7 +502,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 	}  
 
 	Completable cacheZoneDomainRecords(HttpApiClient client, NetworkPoolServer poolServer, NetworkDomainIdentityProjection domain, String recordType, Map opts) {
-		log.info "cacheZoneDomainRecords $poolServer, $domain, $recordType, $opts"
+		log.debug "cacheZoneDomainRecords $poolServer, $domain, $recordType, $opts"
 		def listResults = listZoneRecords(client, poolServer, domain, recordType, opts)
 		log.debug("listResults: {}",listResults)
 		if(listResults.success) {
