@@ -800,7 +800,8 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                 networkPoolIp = morpheus.network.pool.poolIp.create(networkPoolIp)?.blockingGet()
             }
 
-            if (createARecord && domain && domain.name != 'localhost') {
+            if (createARecord && domain && domain.refId == poolServer.integration.id) {
+                log.info("Attempting DNS record...")
                 def fqdn = hostname
 				if(hostname.endsWith(domain.name)) {
 					fqdn = hostname.tokenize('.')[0]
@@ -812,6 +813,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
                 results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'POST')
             } else {
+                log.info("Attempting IPAM record...")
                 apiPath = getServicePath(rpcConfig.serviceUrl) + platformUrl + 'ipamRecords/ref'
                 requestOptions.queryParams = [:]
                 requestOptions.body = JsonOutput.toJson(['ref':networkPoolIp.ipAddress,'objType':'IPAddress','saveComment':'Created with Morpheus','properties':[(customProperty):hostname]])
