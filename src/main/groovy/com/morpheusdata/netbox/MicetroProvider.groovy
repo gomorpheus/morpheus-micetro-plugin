@@ -293,7 +293,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
                 if(startAddress.contains(':')) {
                     def addConfig = [account:poolServer.account, poolServer:poolServer, owner:poolServer.account, name:name, externalId:"${id}",
-                                    cidrIPv6: cidr, type: poolTypeIpv6, poolEnabled:true, parentType:'NetworkPoolServer', parentId:poolServer.id]
+                                    type: poolTypeIpv6, poolEnabled:true, parentType:'NetworkPoolServer', parentId:poolServer.id]
                     newNetworkPool = new NetworkPool(addConfig)
                     newNetworkPool.ipRanges = []
                     rangeConfig = [cidrIPv6: cidr, startIPv6Address: startAddress, endIPv6Address: endAddress]
@@ -326,10 +326,6 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 					existingItem.displayName = displayName
 					save = true
 				}
-                if(networkIp.contains(':') && existingItem?.cidrIPv6 != networkIp) {
-                    existingItem.cidrIPv6 = networkIp
-                    save = true
-                }
 				if(existingItem?.cidr != networkIp) {
 					existingItem.cidr = networkIp
 					save = true
