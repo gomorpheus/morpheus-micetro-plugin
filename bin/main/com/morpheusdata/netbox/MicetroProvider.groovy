@@ -791,16 +791,8 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                 recordType = 'AAAA'
             }
 
-            if(createARecord) {
+            if (createARecord && domain.name != 'localdomain' && domain.externalId) {
                 networkPoolIp.domain = domain
-            }
-            if (networkPoolIp.id) {
-                networkPoolIp = morpheus.network.pool.poolIp.save(networkPoolIp)?.blockingGet()
-            } else {
-                networkPoolIp = morpheus.network.pool.poolIp.create(networkPoolIp)?.blockingGet()
-            }
-
-            if (createARecord && domain && domain.name != 'localhost') {
                 def fqdn = hostname
 				if(hostname.endsWith(domain.name)) {
 					fqdn = hostname.tokenize('.')[0]
