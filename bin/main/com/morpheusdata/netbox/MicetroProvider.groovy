@@ -800,8 +800,8 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                 networkPoolIp = morpheus.network.pool.poolIp.create(networkPoolIp)?.blockingGet()
             }
 
-            if (createARecord && domain && domain.name != 'localhost') {
-                log.info("Attempting DNS entry...")
+            if (createARecord && domain && domain.refId == poolServer.integration.id) {
+                log.info("Attempting DNS record...")
                 def fqdn = hostname
 				if(hostname.endsWith(domain.name)) {
 					fqdn = hostname.tokenize('.')[0]
