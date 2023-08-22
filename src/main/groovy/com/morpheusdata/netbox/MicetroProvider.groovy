@@ -504,7 +504,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 	Completable cacheZoneDomainRecords(HttpApiClient client, NetworkPoolServer poolServer, NetworkDomainIdentityProjection domain, String recordType, Map opts) {
 		def listResults = listZoneRecords(client, poolServer, domain, recordType, opts)
 		log.debug("listResults: {}",listResults)
-		if(listResults.success) {
+		if(listResults.success && listResults.data != null && !listResults.error) {
 			List<Map> apiItems = listResults.data as List<Map>
 			Observable<NetworkDomainRecordIdentityProjection> domainRecords = morpheus.network.domain.record.listIdentityProjections(domain,recordType)
 			SyncTask<NetworkDomainRecordIdentityProjection,Map,NetworkDomainRecord> syncTask = new SyncTask(domainRecords, apiItems as Collection<Map>)
@@ -1201,7 +1201,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 				new OptionType(code: 'micetro.throttleRate', name: 'Throttle Rate', inputType: OptionType.InputType.NUMBER, defaultValue: 0, fieldName: 'serviceThrottleRate', fieldLabel: 'Throttle Rate', fieldContext: 'domain', displayOrder: 4),
 				new OptionType(code: 'micetro.ignoreSsl', name: 'Ignore SSL', inputType: OptionType.InputType.CHECKBOX, defaultValue: 0, fieldName: 'ignoreSsl', fieldLabel: 'Disable SSL SNI Verification', fieldContext: 'domain', displayOrder: 5),
 				new OptionType(code: 'micetro.inventoryExisting', name: 'Inventory Existing', inputType: OptionType.InputType.CHECKBOX, defaultValue: 0, fieldName: 'inventoryExisting', fieldLabel: 'Inventory Existing', fieldContext: 'config', displayOrder: 6),
-                new OptionType(code: 'micetro.nameProperty', name: 'Name Property', inputType: OptionType.InputType.TEXT, fieldName: 'nameProperty', fieldLabel: 'Name Property', fieldContext: 'config', helpBlock: "Supply the Custom Property [Key] that will Store Hostname [Value]", placeHolder: "serverName", displayOrder: 7, required: true)
+                new OptionType(code: 'micetro.nameProperty', name: 'Name Property', inputType: OptionType.InputType.TEXT, fieldName: 'nameProperty', fieldLabel: 'Name Property', fieldContext: 'config', helpBlock: "Supply the Custom Property [Key] that will Store the Hostname [Value]", placeHolder: "serverName", displayOrder: 7, required: true)
 
 		]
 	}
