@@ -207,18 +207,19 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                 }
             } else {
                 morpheus.network.updateNetworkPoolServerStatus(poolServer, AccountIntegration.Status.error, 'Micetro api not reachable')
+                return ServiceResponse.error("Micetro api not reachable")
             }
 			Date now = new Date()
-
-            cacheNetworks(micetroClient,poolServer)
-            cacheZones(micetroClient,poolServer, opts)
-            if(poolServer?.configMap?.inventoryExisting) {
-                cacheIpAddressRecords(micetroClient,poolServer, opts)
-                cacheZoneRecords(micetroClient,poolServer, opts)
+            if(testResults.success) {
+                cacheNetworks(micetroClient,poolServer)
+                cacheZones(micetroClient,poolServer, opts)
+                if(poolServer?.configMap?.inventoryExisting) {
+                    cacheIpAddressRecords(micetroClient,poolServer, opts)
+                    cacheZoneRecords(micetroClient,poolServer, opts)
+                }
+                log.info("Sync Completed in ${new Date().time - now.time}ms")
+                morpheus.network.updateNetworkPoolServerStatus(poolServer, AccountIntegration.Status.ok).subscribe().dispose()
             }
-            log.info("Sync Completed in ${new Date().time - now.time}ms")
-            morpheus.network.updateNetworkPoolServerStatus(poolServer, AccountIntegration.Status.ok).subscribe().dispose()
-
 			return testResults
 		} catch(e) {
 			log.error("refreshNetworkPoolServer error: ${e}", e)
@@ -988,9 +989,9 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                 Observable<NetworkPoolIpIdentityProjection> poolIps = morpheus.network.pool.poolIp.listIdentityProjections(pool.id)
                 SyncTask<NetworkPoolIpIdentityProjection, Map, NetworkPoolIp> syncTask = new SyncTask<NetworkPoolIpIdentityProjection, Map, NetworkPoolIp>(poolIps, apiItems)
                 return syncTask.addMatchFunction { NetworkPoolIpIdentityProjection ipObject, Map apiItem ->
-                    ipObject.externalId == "${apiItem.id}"
+                    ipObject.externalId == "${apiItem.address}"
                 }.addMatchFunction { NetworkPoolIpIdentityProjection domainObject, Map apiItem ->
-                    domainObject.ipAddress == apiItem?.address?.tokenize('/')[0]
+                    domainObject.ipAddress == apiItem.address
                 }.onDelete {removeItems ->
                     morpheus.network.pool.poolIp.remove(pool.id, removeItems).blockingGet()
                 }.onAdd { itemsToAdd ->
