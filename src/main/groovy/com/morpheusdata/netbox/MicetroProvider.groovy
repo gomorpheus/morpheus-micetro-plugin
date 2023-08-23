@@ -794,11 +794,6 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
             if(createARecord) {
                 networkPoolIp.domain = domain
             }
-            if (networkPoolIp.id) {
-                networkPoolIp = morpheus.network.pool.poolIp.save(networkPoolIp)?.blockingGet()
-            } else {
-                networkPoolIp = morpheus.network.pool.poolIp.create(networkPoolIp)?.blockingGet()
-            }
 
             if (createARecord && domain && domain.refId == poolServer.integration.id) {
                 log.info("Attempting DNS record...")
@@ -823,6 +818,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
             if (results.success && !results.error) {
                 networkPoolIp.externalId = networkPoolIp.ipAddress
+                networkPoolIp = morpheus.network.pool.poolIp.create(networkPoolIp)?.blockingGet()
                 return ServiceResponse.success(networkPoolIp)
             } else {
                 log.warn("API Call Failed to allocate IP Address")
@@ -1024,7 +1020,10 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 			def types = it.state
             def names = it.dnsHosts?.dnsRecord?.name ?: it.customProperties?[customProperty] ?: null
 			def ipType = 'assigned'
-            if(types == ('Claimed' || 'Held')) {
+            if(types == 'Claimed') {
+                ipType = 'reserved'
+            }
+            if(types == 'Held') {
                 ipType = 'reserved'
             }
             if(types == 'Assigned') {
@@ -1049,7 +1048,10 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 				def hostname = update.masterItem.dnsHosts?.dnsRecord?.name ?: update.masterItem.customProperties?[customProperty] ?: null
                 def types = update.masterItem.state
 				def ipType = 'assigned'
-                if(types == ('Claimed' || 'Held')) {
+                if(types == 'Claimed') {
+                ipType = 'reserved'
+                }
+                if(types == 'Held') {
                     ipType = 'reserved'
                 }
                 if(types == 'Assigned') {
