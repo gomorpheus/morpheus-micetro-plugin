@@ -979,12 +979,13 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
 	// cacheIpAddressRecords
     void cacheIpAddressRecords(HttpApiClient client, NetworkPoolServer poolServer, Map opts=[:]) {
+        
         morpheus.network.pool.listIdentityProjections(poolServer.id).buffer(50).flatMap { Collection<NetworkPoolIdentityProjection> poolIdents ->
             return morpheus.network.pool.listById(poolIdents.collect{it.id})
         }.flatMap { NetworkPool pool ->
             def listResults = listHostRecords(client,poolServer,pool)
             if (listResults.success) {
-
+                def customProperty = poolServer.configMap?.nameProperty.toString()
                 List<Map> apiItems = listResults.data
                 Observable<NetworkPoolIpIdentityProjection> poolIps = morpheus.network.pool.poolIp.listIdentityProjections(pool.id)
                 SyncTask<NetworkPoolIpIdentityProjection, Map, NetworkPoolIp> syncTask = new SyncTask<NetworkPoolIpIdentityProjection, Map, NetworkPoolIp>(poolIps, apiItems)
@@ -995,7 +996,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                 }.onDelete {removeItems ->
                     morpheus.network.pool.poolIp.remove(pool.id, removeItems).blockingGet()
                 }.onAdd { itemsToAdd ->
-                    addMissingIps(pool, itemsToAdd)
+                    addMissingIps(pool, customProperty, itemsToAdd)
                 }.withLoadObjectDetails { List<SyncTask.UpdateItemDto<NetworkPoolIpIdentityProjection,Map>> updateItems ->
 
                     Map<Long, SyncTask.UpdateItemDto<NetworkPoolIpIdentityProjection, Map>> updateItemMap = updateItems.collectEntries { [(it.existingItem.id): it]}
@@ -1005,7 +1006,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                     }
 
                 }.onUpdate { List<SyncTask.UpdateItem<NetworkDomain,Map>> updateItems ->
-                    updateMatchedIps(updateItems)
+                    updateMatchedIps(updateItems,customProperty)
                 }.observe()
             } else {
                 return Single.just(false)
@@ -1016,12 +1017,12 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
     }
 
-	void addMissingIps(NetworkPool pool, List addList) {
+	void addMissingIps(NetworkPool pool, String customProperty, List addList) {
         List<NetworkPoolIp> poolIpsToAdd = addList?.collect { it ->
             def externalId = it.address
 			def ipAddress = it.address
 			def types = it.state
-            def names = it.dnsHosts?.dnsRecord?.name ?: null
+            def names = it.dnsHosts?.dnsRecord?.name ?: it.customProperties?[customProperty] ?: null
 			def ipType = 'assigned'
             if(types == ('Claimed' || 'Held')) {
                 ipType = 'reserved'
@@ -1039,13 +1040,13 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 		}
 	}
 
-	void updateMatchedIps(List<SyncTask.UpdateItem<NetworkPoolIp,Map>> updateList) {
+	void updateMatchedIps(List<SyncTask.UpdateItem<NetworkPoolIp,Map>> updateList,String customProperty) {
 		List<NetworkPoolIp> ipsToUpdate = []
 		updateList?.each {  update ->
 			NetworkPoolIp existingItem = update.existingItem
             // reserved,assigned,unmanaged,transient
 			if(existingItem) {
-				def hostname = update.masterItem.dnsHosts?.dnsRecord?.name ?: null
+				def hostname = update.masterItem.dnsHosts?.dnsRecord?.name ?: update.masterItem.customProperties?[customProperty] ?: null
                 def types = update.masterItem.state
 				def ipType = 'assigned'
                 if(types == ('Claimed' || 'Held')) {
@@ -1062,7 +1063,6 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 				if(existingItem.hostname != hostname) {
 					existingItem.hostname = hostname
 					save = true
-
 				}
 				if(save) {
 					ipsToUpdate << existingItem
