@@ -207,18 +207,19 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                 }
             } else {
                 morpheus.network.updateNetworkPoolServerStatus(poolServer, AccountIntegration.Status.error, 'Micetro api not reachable')
+                return ServiceResponse.error("Micetro api not reachable")
             }
 			Date now = new Date()
-
-            cacheNetworks(micetroClient,poolServer)
-            cacheZones(micetroClient,poolServer, opts)
-            if(poolServer?.configMap?.inventoryExisting) {
-                cacheIpAddressRecords(micetroClient,poolServer, opts)
-                cacheZoneRecords(micetroClient,poolServer, opts)
+            if(testResults.success) {
+                cacheNetworks(micetroClient,poolServer, opts)
+                cacheZones(micetroClient,poolServer, opts)
+                if(poolServer?.configMap?.inventoryExisting) {
+                    cacheIpAddressRecords(micetroClient,poolServer, opts)
+                    cacheZoneRecords(micetroClient,poolServer, opts)
+                }
+                log.info("Sync Completed in ${new Date().time - now.time}ms")
+                morpheus.network.updateNetworkPoolServerStatus(poolServer, AccountIntegration.Status.ok).subscribe().dispose()
             }
-            log.info("Sync Completed in ${new Date().time - now.time}ms")
-            morpheus.network.updateNetworkPoolServerStatus(poolServer, AccountIntegration.Status.ok).subscribe().dispose()
-
 			return testResults
 		} catch(e) {
 			log.error("refreshNetworkPoolServer error: ${e}", e)
@@ -265,8 +266,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 		def poolTypeIpv6 = new NetworkPoolType(code: 'micetroipv6')
 		List<NetworkPool> missingPoolsList = []
 		chunkedAddList?.each { Map it ->
-            def isPool = it.utilizationPercentage
-            if ((it?.utilizationPercentage >= 0) || (!it.isContainer && it.name.contains(':'))) {
+            if (((it?.utilizationPercentage >= 0) || (!it.isContainer && it.name.contains(':'))) && it?.authority?.subtype != 'Failover') {
                 def id = it?.ref?.tokenize('/')[1]
                 def newNetworkPool
                 def name = it.customProperties.Title ?: it.name
@@ -504,7 +504,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 	Completable cacheZoneDomainRecords(HttpApiClient client, NetworkPoolServer poolServer, NetworkDomainIdentityProjection domain, String recordType, Map opts) {
 		def listResults = listZoneRecords(client, poolServer, domain, recordType, opts)
 		log.debug("listResults: {}",listResults)
-		if(listResults.success) {
+		if(listResults.success && listResults.data != null && !listResults.error) {
 			List<Map> apiItems = listResults.data as List<Map>
 			Observable<NetworkDomainRecordIdentityProjection> domainRecords = morpheus.network.domain.record.listIdentityProjections(domain,recordType)
 			SyncTask<NetworkDomainRecordIdentityProjection,Map,NetworkDomainRecord> syncTask = new SyncTask(domainRecords, apiItems as Collection<Map>)
@@ -793,11 +793,6 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
             if(createARecord) {
                 networkPoolIp.domain = domain
             }
-            if (networkPoolIp.id) {
-                networkPoolIp = morpheus.network.pool.poolIp.save(networkPoolIp)?.blockingGet()
-            } else {
-                networkPoolIp = morpheus.network.pool.poolIp.create(networkPoolIp)?.blockingGet()
-            }
 
             if (createARecord && domain && domain.refId == poolServer.integration.id) {
                 log.info("Attempting DNS record...")
@@ -822,6 +817,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
             if (results.success && !results.error) {
                 networkPoolIp.externalId = networkPoolIp.ipAddress
+                networkPoolIp = morpheus.network.pool.poolIp.create(networkPoolIp)?.blockingGet()
                 return ServiceResponse.success(networkPoolIp)
             } else {
                 log.warn("API Call Failed to allocate IP Address")
@@ -978,23 +974,25 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
 	// cacheIpAddressRecords
     void cacheIpAddressRecords(HttpApiClient client, NetworkPoolServer poolServer, Map opts=[:]) {
+        
         morpheus.network.pool.listIdentityProjections(poolServer.id).buffer(50).flatMap { Collection<NetworkPoolIdentityProjection> poolIdents ->
             return morpheus.network.pool.listById(poolIdents.collect{it.id})
         }.flatMap { NetworkPool pool ->
+            log.info("zzzlistHostRecords Pool: ${pool.name}")
             def listResults = listHostRecords(client,poolServer,pool)
             if (listResults.success) {
-
+                def customProperty = poolServer.configMap?.nameProperty.toString()
                 List<Map> apiItems = listResults.data
                 Observable<NetworkPoolIpIdentityProjection> poolIps = morpheus.network.pool.poolIp.listIdentityProjections(pool.id)
                 SyncTask<NetworkPoolIpIdentityProjection, Map, NetworkPoolIp> syncTask = new SyncTask<NetworkPoolIpIdentityProjection, Map, NetworkPoolIp>(poolIps, apiItems)
                 return syncTask.addMatchFunction { NetworkPoolIpIdentityProjection ipObject, Map apiItem ->
-                    ipObject.externalId == "${apiItem.id}"
+                    ipObject.externalId == "${apiItem.address}"
                 }.addMatchFunction { NetworkPoolIpIdentityProjection domainObject, Map apiItem ->
-                    domainObject.ipAddress == apiItem?.address?.tokenize('/')[0]
+                    domainObject.ipAddress == apiItem.address
                 }.onDelete {removeItems ->
                     morpheus.network.pool.poolIp.remove(pool.id, removeItems).blockingGet()
                 }.onAdd { itemsToAdd ->
-                    addMissingIps(pool, itemsToAdd)
+                    addMissingIps(pool, customProperty, itemsToAdd)
                 }.withLoadObjectDetails { List<SyncTask.UpdateItemDto<NetworkPoolIpIdentityProjection,Map>> updateItems ->
 
                     Map<Long, SyncTask.UpdateItemDto<NetworkPoolIpIdentityProjection, Map>> updateItemMap = updateItems.collectEntries { [(it.existingItem.id): it]}
@@ -1004,7 +1002,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                     }
 
                 }.onUpdate { List<SyncTask.UpdateItem<NetworkDomain,Map>> updateItems ->
-                    updateMatchedIps(updateItems)
+                    updateMatchedIps(updateItems,customProperty)
                 }.observe()
             } else {
                 return Single.just(false)
@@ -1015,14 +1013,17 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
     }
 
-	void addMissingIps(NetworkPool pool, List addList) {
+	void addMissingIps(NetworkPool pool, String customProperty, List addList) {
         List<NetworkPoolIp> poolIpsToAdd = addList?.collect { it ->
             def externalId = it.address
 			def ipAddress = it.address
 			def types = it.state
-            def names = it.dnsHosts?.dnsRecord?.name ?: null
+            def names = it.dnsHosts?.dnsRecord?.name ?: it.customProperties?[customProperty] ?: null
 			def ipType = 'assigned'
-            if(types == ('Claimed' || 'Held')) {
+            if(types == 'Claimed') {
+                ipType = 'reserved'
+            }
+            if(types == 'Held') {
                 ipType = 'reserved'
             }
             if(types == 'Assigned') {
@@ -1038,16 +1039,19 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 		}
 	}
 
-	void updateMatchedIps(List<SyncTask.UpdateItem<NetworkPoolIp,Map>> updateList) {
+	void updateMatchedIps(List<SyncTask.UpdateItem<NetworkPoolIp,Map>> updateList,String customProperty) {
 		List<NetworkPoolIp> ipsToUpdate = []
 		updateList?.each {  update ->
 			NetworkPoolIp existingItem = update.existingItem
             // reserved,assigned,unmanaged,transient
 			if(existingItem) {
-				def hostname = update.masterItem.dnsHosts?.dnsRecord?.name ?: null
+				def hostname = update.masterItem.dnsHosts?.dnsRecord?.name ?: update.masterItem.customProperties?[customProperty] ?: null
                 def types = update.masterItem.state
 				def ipType = 'assigned'
-                if(types == ('Claimed' || 'Held')) {
+                if(types == 'Claimed') {
+                ipType = 'reserved'
+                }
+                if(types == 'Held') {
                     ipType = 'reserved'
                 }
                 if(types == 'Assigned') {
@@ -1061,7 +1065,6 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 				if(existingItem.hostname != hostname) {
 					existingItem.hostname = hostname
 					save = true
-
 				}
 				if(save) {
 					ipsToUpdate << existingItem
@@ -1069,7 +1072,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 			}
 		}
 		if(ipsToUpdate.size() > 0) {
-			morpheus.network.pool.poolIp.save(ipsToUpdate)
+			morpheus.network.pool.poolIp.save(ipsToUpdate).blockingGet()
 		}
 	}
 
@@ -1097,6 +1100,8 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                     requestOptions.queryParams = ['filter':'state!=Free',limit:maxResults.toString(),offset:start.toString()]
 
                     def results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'GET')
+
+                    log.info("zzzlistHostRecords Size: ${results.data?.result?.ipamRecords?.size()}")
 
                     if(results?.success && results?.error != true) {
                         rtn.success = true
@@ -1201,7 +1206,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 				new OptionType(code: 'micetro.throttleRate', name: 'Throttle Rate', inputType: OptionType.InputType.NUMBER, defaultValue: 0, fieldName: 'serviceThrottleRate', fieldLabel: 'Throttle Rate', fieldContext: 'domain', displayOrder: 4),
 				new OptionType(code: 'micetro.ignoreSsl', name: 'Ignore SSL', inputType: OptionType.InputType.CHECKBOX, defaultValue: 0, fieldName: 'ignoreSsl', fieldLabel: 'Disable SSL SNI Verification', fieldContext: 'domain', displayOrder: 5),
 				new OptionType(code: 'micetro.inventoryExisting', name: 'Inventory Existing', inputType: OptionType.InputType.CHECKBOX, defaultValue: 0, fieldName: 'inventoryExisting', fieldLabel: 'Inventory Existing', fieldContext: 'config', displayOrder: 6),
-                new OptionType(code: 'micetro.nameProperty', name: 'Name Property', inputType: OptionType.InputType.TEXT, fieldName: 'nameProperty', fieldLabel: 'Name Property', fieldContext: 'config', helpBlock: "Supply the Custom Property [Key] that will Store Hostname [Value]", placeHolder: "serverName", displayOrder: 7, required: true)
+                new OptionType(code: 'micetro.nameProperty', name: 'Name Property', inputType: OptionType.InputType.TEXT, fieldName: 'nameProperty', fieldLabel: 'Name Property', fieldContext: 'config', helpBlock: "Supply the Custom Property [Key] that will Store the Hostname [Value]", placeHolder: "serverName", displayOrder: 7, required: true)
 
 		]
 	}

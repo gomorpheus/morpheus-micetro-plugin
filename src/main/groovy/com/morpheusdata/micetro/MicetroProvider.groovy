@@ -267,7 +267,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 		List<NetworkPool> missingPoolsList = []
 		chunkedAddList?.each { Map it ->
             def isPool = it.utilizationPercentage
-            if ((it?.utilizationPercentage >= 0) || (!it.isContainer && it.name.contains(':'))) {
+            if (((it?.utilizationPercentage >= 0) || (!it.isContainer && it.name.contains(':'))) && it?.authority?.subtype != 'Failover') {
                 def id = it?.ref?.tokenize('/')[1]
                 def newNetworkPool
                 def name = it.customProperties.Title ?: it.name
@@ -612,7 +612,10 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
                     def results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'GET')
 
-                    if(results?.success && results?.error != true) {
+                    if(results?.error?.error?.code == 520) {
+                        rtn.success = true
+                        hasMore = false
+                    } else if(results?.success && results?.error != true) {
                         rtn.success = true
                         if(results.data?.result?.dnsRecords?.size() > 0) {
                             rtn.data += results.data.result.dnsRecords
@@ -642,7 +645,10 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
                 def results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'GET')
 
-                if(results?.success && results?.error != true) {
+                if(results?.error?.error?.code == 520) {
+                    rtn.success = true
+                    hasMore = false
+                } else if(results?.success && results?.error != true) {
                     rtn.success = true
                     if(results.data?.result?.dnsRecords?.size() > 0) {
                         rtn.data = results.data.result.dnsRecords
@@ -980,7 +986,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
             return morpheus.network.pool.listById(poolIdents.collect{it.id})
         }.flatMap { NetworkPool pool ->
             def listResults = listHostRecords(client,poolServer,pool)
-            if (listResults.success) {
+            if (listResults.success && !listResults.error && listResults.data) {
                 def customProperty = poolServer.configMap?.nameProperty.toString()
                 List<Map> apiItems = listResults.data
                 Observable<NetworkPoolIpIdentityProjection> poolIps = morpheus.network.pool.poolIp.listIdentityProjections(pool.id)
@@ -1089,8 +1095,9 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
             def doPaging = opts.doPaging != null ? opts.doPaging : true
             def start = 0
             def maxResults = opts.maxResults ?: 1000
-
+            
             log.debug("url: ${apiUrl} path: ${apiPath}")
+            log.debug("listHostRecords: ${networkPool.name}")
 
             if(doPaging == true) {
                 
@@ -1101,7 +1108,12 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
                     def results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'GET')
 
-                    if(results?.success && results?.error != true) {
+                    log.debug("listHostRecords Count: ${results.data?.result?.ipamRecords?.size()}")
+
+                    if(results?.error?.error?.code == 265) {
+                        rtn.success = true
+                        hasMore = false
+                    } else if(results?.success && results?.error != true) {
                         rtn.success = true
                         if(results.data?.result?.ipamRecords?.size() > 0) {
                             rtn.data += results.data.result.ipamRecords
@@ -1130,7 +1142,10 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
                 def results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'GET')
 
-                if(results?.success && results?.error != true) {
+                if(results?.error?.error?.code == 265) {
+                    rtn.success = true
+                    hasMore = false
+                } else if(results?.success && results?.error != true) {
                     rtn.success = true
                     if(results.data?.result?.ipamRecords?.size() > 0) {
                         rtn.data = results.data.result.ipamRecords
