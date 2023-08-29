@@ -211,7 +211,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
             }
 			Date now = new Date()
             if(testResults.success) {
-                cacheNetworks(micetroClient,poolServer, opts)
+                cacheNetworks(micetroClient,poolServer)
                 cacheZones(micetroClient,poolServer, opts)
                 if(poolServer?.configMap?.inventoryExisting) {
                     cacheIpAddressRecords(micetroClient,poolServer, opts)
@@ -266,6 +266,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 		def poolTypeIpv6 = new NetworkPoolType(code: 'micetroipv6')
 		List<NetworkPool> missingPoolsList = []
 		chunkedAddList?.each { Map it ->
+            def isPool = it.utilizationPercentage
             if (((it?.utilizationPercentage >= 0) || (!it.isContainer && it.name.contains(':'))) && it?.authority?.subtype != 'Failover') {
                 def id = it?.ref?.tokenize('/')[1]
                 def newNetworkPool
@@ -402,14 +403,8 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                         rtn.success = true
                         if(results.data?.result?.dnsZones?.size() > 0) {
                             rtn.data += results.data.result.dnsZones
-
-                            if(doPaging == true) {
-                                start += maxResults
-                                hasMore = true
-                            } else {
-                                hasMore = false
-                            }
-
+                            start += maxResults
+                            hasMore = true
                         } else {
                             hasMore = false
                         }
@@ -611,7 +606,10 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
                     def results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'GET')
 
-                    if(results?.success && results?.error != true) {
+                    if(results?.error?.error?.code == 520) {
+                        rtn.success = true
+                        hasMore = false
+                    } else if(results?.success && results?.error != true) {
                         rtn.success = true
                         if(results.data?.result?.dnsRecords?.size() > 0) {
                             rtn.data += results.data.result.dnsRecords
@@ -641,7 +639,10 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
                 def results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'GET')
 
-                if(results?.success && results?.error != true) {
+                if(results?.error?.error?.code == 520) {
+                    rtn.success = true
+                    hasMore = false
+                } else if(results?.success && results?.error != true) {
                     rtn.success = true
                     if(results.data?.result?.dnsRecords?.size() > 0) {
                         rtn.data = results.data.result.dnsRecords
@@ -928,14 +929,8 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                         rtn.success = true
                         if(results.data?.result?.ranges?.size() > 0) {
                             rtn.data += results.data.result.ranges
-
-                            if(doPaging == true) {
-                                start += maxResults
-                                hasMore = true
-                            } else {
-                                hasMore = false
-                            }
-
+                            start += maxResults
+                            hasMore = true
                         } else {
                             hasMore = false
                         }
@@ -978,9 +973,8 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
         morpheus.network.pool.listIdentityProjections(poolServer.id).buffer(50).flatMap { Collection<NetworkPoolIdentityProjection> poolIdents ->
             return morpheus.network.pool.listById(poolIdents.collect{it.id})
         }.flatMap { NetworkPool pool ->
-            log.info("zzzlistHostRecords Pool: ${pool.name}")
             def listResults = listHostRecords(client,poolServer,pool)
-            if (listResults.success) {
+            if (listResults.success && !listResults.error && listResults.data) {
                 def customProperty = poolServer.configMap?.nameProperty.toString()
                 List<Map> apiItems = listResults.data
                 Observable<NetworkPoolIpIdentityProjection> poolIps = morpheus.network.pool.poolIp.listIdentityProjections(pool.id)
@@ -1005,7 +999,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                     updateMatchedIps(updateItems,customProperty)
                 }.observe()
             } else {
-                return Single.just(false)
+                return Single.just(false).toObservable()
             }
         }.doOnError{ e ->
             log.error("cacheIpRecords error: ${e}", e)
@@ -1089,8 +1083,9 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
             def doPaging = opts.doPaging != null ? opts.doPaging : true
             def start = 0
             def maxResults = opts.maxResults ?: 1000
-
+            
             log.debug("url: ${apiUrl} path: ${apiPath}")
+            log.debug("listHostRecords: ${networkPool.name}")
 
             if(doPaging == true) {
                 
@@ -1101,20 +1096,17 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
                     def results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'GET')
 
-                    log.info("zzzlistHostRecords Size: ${results.data?.result?.ipamRecords?.size()}")
+                    log.debug("listHostRecords Count: ${results.data?.result?.ipamRecords?.size()}")
 
-                    if(results?.success && results?.error != true) {
+                    if(results?.error?.error?.code == 265) {
+                        rtn.success = true
+                        hasMore = false
+                    } else if(results?.success && results?.error != true) {
                         rtn.success = true
                         if(results.data?.result?.ipamRecords?.size() > 0) {
                             rtn.data += results.data.result.ipamRecords
-
-                            if(doPaging == true) {
-                                start += maxResults
-                                hasMore = true
-                            } else {
-                                hasMore = false
-                            }
-
+                            start += maxResults
+                            hasMore = true
                         } else {
                             hasMore = false
                         }
@@ -1132,7 +1124,9 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
                 def results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'GET')
 
-                if(results?.success && results?.error != true) {
+                if(results?.error?.error?.code == 265) {
+                    rtn.success = true
+                } else if(results?.success && results?.error != true) {
                     rtn.success = true
                     if(results.data?.result?.ipamRecords?.size() > 0) {
                         rtn.data = results.data.result.ipamRecords

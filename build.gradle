@@ -60,12 +60,12 @@ jar {
 				'Plugin-Version': version,
 				'Morpheus-Name': 'Micetro',
 				'Morpheus-Organization': 'morpheus',
-				'Morpheus-Code': 'micetro-plugin',
+				'Morpheus-Code': 'morpheus-micetro-plugin',
 				'Morpheus-Description': 'Plugin for Mice and Men IPAM',
 				'Morpheus-Logo': 'assets/micetro.png',
 				'Morpheus-Logo-Dark': 'assets/micetro.png',
 				'Morpheus-Color': '#ffffff',
-				'Morpheus-Labels': 'Plugin, Networking, Network',
+				'Morpheus-Labels': 'plugin,networking,ipam,dns',
 				'Morpheus-Repo': 'https://github.com/gomorpheus/morpheus-micetro-plugin',
 				'Morpheus-Min-Appliance-Version': minversion
 		)
