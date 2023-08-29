@@ -401,7 +401,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
                     if(results?.success && results?.error != true) {
                         rtn.success = true
-                        if(results.data?.result?.dnsZones.size() > 0) {
+                        if(results.data?.result?.dnsZones?.size() > 0) {
                             rtn.data += results.data.result.dnsZones
                             start += maxResults
                             hasMore = true
@@ -424,7 +424,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
                 if(results?.success && results?.error != true) {
                     rtn.success = true
-                    if(results.data?.result?.dnsZones.size() > 0) {
+                    if(results.data?.result?.dnsZones?.size() > 0) {
                         rtn.data = results.data.result.dnsZones
                     }
                 } else {
@@ -927,7 +927,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
                     if(results?.success && results?.error != true) {
                         rtn.success = true
-                        if(results.data?.result?.ranges.size() > 0) {
+                        if(results.data?.result?.ranges?.size() > 0) {
                             rtn.data += results.data.result.ranges
                             start += maxResults
                             hasMore = true
@@ -950,7 +950,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
                 if(results?.success && results?.error != true) {
                     rtn.success = true
-                    if(results.data?.result?.ranges.size() > 0) {
+                    if(results.data?.result?.ranges?.size() > 0) {
                         rtn.data = results.data.result.ranges
                     }
                 } else {
@@ -999,7 +999,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                     updateMatchedIps(updateItems,customProperty)
                 }.observe()
             } else {
-                return Single.just(false)
+                return Single.just(false).toObservable()
             }
         }.doOnError{ e ->
             log.error("cacheIpRecords error: ${e}", e)
@@ -1096,14 +1096,14 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
                     def results = client.callJsonApi(apiUrl,apiPath,rpcConfig.username,rpcConfig.password,requestOptions,'GET')
 
-                    log.debug("listHostRecords Count: ${results.data?.result?.ipamRecords.size()}")
+                    log.debug("listHostRecords Count: ${results.data?.result?.ipamRecords?.size()}")
 
                     if(results?.error?.error?.code == 265) {
                         rtn.success = true
                         hasMore = false
                     } else if(results?.success && results?.error != true) {
                         rtn.success = true
-                        if(results.data?.result?.ipamRecords.size() > 0) {
+                        if(results.data?.result?.ipamRecords?.size() > 0) {
                             rtn.data += results.data.result.ipamRecords
                             start += maxResults
                             hasMore = true
@@ -1128,7 +1128,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                     rtn.success = true
                 } else if(results?.success && results?.error != true) {
                     rtn.success = true
-                    if(results.data?.result?.ipamRecords.size() > 0) {
+                    if(results.data?.result?.ipamRecords?.size() > 0) {
                         rtn.data = results.data.result.ipamRecords
                     }
                 } else {
