@@ -979,8 +979,8 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                 List<Map> apiItems = listResults.data
                 Observable<NetworkPoolIpIdentityProjection> poolIps = morpheus.network.pool.poolIp.listIdentityProjections(pool.id)
                 SyncTask<NetworkPoolIpIdentityProjection, Map, NetworkPoolIp> syncTask = new SyncTask<NetworkPoolIpIdentityProjection, Map, NetworkPoolIp>(poolIps, apiItems)
-                return syncTask.addMatchFunction { NetworkPoolIpIdentityProjection ipObject, Map apiItem ->
-                    ipObject.externalId == "${apiItem.address}"
+                return syncTask.addMatchFunction { NetworkPoolIpIdentityProjection domainObject, Map apiItem ->
+                    domainObject.externalId == "${apiItem.address}"
                 }.addMatchFunction { NetworkPoolIpIdentityProjection domainObject, Map apiItem ->
                     domainObject.ipAddress == apiItem.address
                 }.onDelete {removeItems ->
