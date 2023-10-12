@@ -483,7 +483,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 	}
 
     def cacheZoneRecords(HttpApiClient client, NetworkPoolServer poolServer, Map opts) {
-		morpheus.network.domain.listIdentityProjections(poolServer.integration.id).flatMap {NetworkDomainIdentityProjection domain ->
+		morpheus.network.domain.listIdentityProjections(poolServer.integration.id).concatMap {NetworkDomainIdentityProjection domain ->
 			Completable.mergeArray(cacheZoneDomainRecords(client,poolServer,domain,'A',opts),
 				cacheZoneDomainRecords(client,poolServer, domain, 'AAAA', opts),
 				cacheZoneDomainRecords(client,poolServer, domain, 'PTR', opts),
@@ -493,7 +493,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 			).toObservable().subscribeOn(Schedulers.io())
 		}.doOnError{ e ->
 			log.error("cacheZoneRecords error: ${e}", e)
-		}.subscribe()
+		}.blockingSubscribe()
 	}  
 
 	Completable cacheZoneDomainRecords(HttpApiClient client, NetworkPoolServer poolServer, NetworkDomainIdentityProjection domain, String recordType, Map opts) {
@@ -970,9 +970,9 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 	// cacheIpAddressRecords
     void cacheIpAddressRecords(HttpApiClient client, NetworkPoolServer poolServer, Map opts=[:]) {
         
-        morpheus.network.pool.listIdentityProjections(poolServer.id).buffer(50).flatMap { Collection<NetworkPoolIdentityProjection> poolIdents ->
+        morpheus.network.pool.listIdentityProjections(poolServer.id).buffer(50).concatMap { Collection<NetworkPoolIdentityProjection> poolIdents ->
             return morpheus.network.pool.listById(poolIdents.collect{it.id})
-        }.flatMap { NetworkPool pool ->
+        }.concatMap { NetworkPool pool ->
             def listResults = listHostRecords(client,poolServer,pool)
             if (listResults.success && !listResults.error && listResults.data) {
                 def customProperty = poolServer.configMap?.nameProperty.toString()
@@ -1003,7 +1003,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
             }
         }.doOnError{ e ->
             log.error("cacheIpRecords error: ${e}", e)
-        }.subscribe()
+        }.blockingSubscribe()
 
     }
 
