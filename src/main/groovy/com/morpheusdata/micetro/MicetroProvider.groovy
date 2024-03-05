@@ -122,7 +122,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 		}
         def rpcConfig = getRpcConfig(poolServer)
 		HttpApiClient micetroClient = new HttpApiClient()
-		def networkProxy = morpheusContext.async.setting.getGlobalNetworkProxy()
+		def networkProxy = morpheusContext.services.setting.getGlobalNetworkProxy()
 		micetroClient.networkProxy = networkProxy
 		try {
 			def apiUrl = cleanServiceUrl(poolServer.serviceUrl)
@@ -190,7 +190,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 		log.debug("refreshNetworkPoolServer: {}", poolServer.dump())
 		HttpApiClient micetroClient = new HttpApiClient()
 		micetroClient.throttleRate = poolServer.serviceThrottleRate
-		def networkProxy = morpheusContext.async.setting.getGlobalNetworkProxy()
+		def networkProxy = morpheusContext.services.setting.getGlobalNetworkProxy()
 		micetroClient.networkProxy = networkProxy
 		try {
 			def apiUrl = cleanServiceUrl(poolServer.serviceUrl)
@@ -265,7 +265,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
 	void addMissingPools(NetworkPoolServer poolServer, Collection<Map> chunkedAddList) {
         HttpApiClient client = new HttpApiClient();
-		client.networkProxy = morpheusContext.async.setting.getGlobalNetworkProxy()
+		client.networkProxy = morpheusContext.services.setting.getGlobalNetworkProxy()
         def rpcConfig = getRpcConfig(poolServer)
         HttpApiClient.RequestOptions requestOptions = new HttpApiClient.RequestOptions(ignoreSSL: rpcConfig.ignoreSSL)
 		def poolType = new NetworkPoolType(code: 'micetro')
@@ -315,7 +315,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 
 	void updateMatchedPools(NetworkPoolServer poolServer, List<SyncTask.UpdateItem<NetworkPool,Map>> chunkedUpdateList) {
         HttpApiClient client = new HttpApiClient();
-		client.networkProxy = morpheusContext.async.setting.getGlobalNetworkProxy()
+		client.networkProxy = morpheusContext.services.setting.getGlobalNetworkProxy()
         def rpcConfig = getRpcConfig(poolServer)
         HttpApiClient.RequestOptions requestOptions = new HttpApiClient.RequestOptions(ignoreSSL: rpcConfig.ignoreSSL)
         
@@ -672,7 +672,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 	ServiceResponse<NetworkDomainRecord> createRecord(AccountIntegration integration, NetworkDomainRecord record, Map opts) {
         ServiceResponse<NetworkDomainRecord> rtn = new ServiceResponse<>()
 		HttpApiClient client = new HttpApiClient()
-		client.networkProxy = morpheusContext.async.setting.getGlobalNetworkProxy()
+		client.networkProxy = morpheusContext.services.setting.getGlobalNetworkProxy()
 		def poolServer = morpheus.network.getPoolServerByAccountIntegration(integration).blockingGet()
 
         try {
@@ -717,7 +717,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
                 morpheus.network.getPoolServerByAccountIntegration(integration).doOnSuccess({ poolServer ->
                     def rpcConfig = getRpcConfig(poolServer)
                     HttpApiClient client = new HttpApiClient()
-					client.networkProxy = morpheusContext.async.setting.getGlobalNetworkProxy()
+					client.networkProxy = morpheusContext.services.setting.getGlobalNetworkProxy()
                     HttpApiClient.RequestOptions requestOptions = new HttpApiClient.RequestOptions(ignoreSSL: rpcConfig.ignoreSSL)
                     def apiUrl = cleanServiceUrl(rpcConfig.serviceUrl)
                     try {
@@ -749,7 +749,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 	@Override
 	ServiceResponse createHostRecord(NetworkPoolServer poolServer, NetworkPool networkPool, NetworkPoolIp networkPoolIp, NetworkDomain domain, Boolean createARecord, Boolean createPtrRecord) {
 		HttpApiClient client = new HttpApiClient();
-		client.networkProxy = morpheusContext.async.setting.getGlobalNetworkProxy()
+		client.networkProxy = morpheusContext.services.setting.getGlobalNetworkProxy()
         InetAddressValidator inetAddressValidator = new InetAddressValidator()
         
         def rpcConfig = getRpcConfig(poolServer)
@@ -845,7 +845,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 	@Override
 	ServiceResponse updateHostRecord(NetworkPoolServer poolServer, NetworkPool networkPool, NetworkPoolIp networkPoolIp) {
 		HttpApiClient client = new HttpApiClient();
-		client.networkProxy = morpheusContext.async.setting.getGlobalNetworkProxy()
+		client.networkProxy = morpheusContext.services.setting.getGlobalNetworkProxy()
         def rpcConfig = getRpcConfig(poolServer)
         HttpApiClient.RequestOptions requestOptions = new HttpApiClient.RequestOptions(ignoreSSL: rpcConfig.ignoreSSL)
 
@@ -887,7 +887,7 @@ class MicetroProvider implements IPAMProvider, DNSProvider {
 	@Override
 	ServiceResponse deleteHostRecord(NetworkPool networkPool, NetworkPoolIp networkPoolIp, Boolean deleteAssociatedRecords ) {
 		HttpApiClient client = new HttpApiClient();
-		client.networkProxy = morpheusContext.async.setting.getGlobalNetworkProxy()
+		client.networkProxy = morpheusContext.services.setting.getGlobalNetworkProxy()
         def poolServer = morpheus.network.getPoolServerById(networkPool.poolServer.id).blockingGet()
         def rpcConfig = getRpcConfig(poolServer)
         HttpApiClient.RequestOptions requestOptions = new HttpApiClient.RequestOptions(ignoreSSL: rpcConfig.ignoreSSL)
